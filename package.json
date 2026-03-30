@@ -1,4 +1,5 @@
 {
+<<<<<<< HEAD
   "name": "tonomo-webhook",
   "version": "1.0.0",
   "main": "server.js",
@@ -13,5 +14,16 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
+=======
+  "name": "webhook-server",
+  "version": "1.0.0",
+  "description": "Simple Express webhook server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+>>>>>>> a354d51f6732e20fe3776b231345c1ff705e643a
   }
 }
