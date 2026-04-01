@@ -34,7 +34,7 @@ async function getDropboxAccessToken() {
 }
 
 app.post('/webhook', async (req, res) => {
-  const { order_id, agent_email, property_address, package_type } = req.body;
+  const { order_id, agent_email, property_address, package_type, services_a_la_cart } = req.body;
 
   if (!order_id || !agent_email || !property_address || !package_type) {
     return res.status(400).json({
@@ -42,9 +42,12 @@ app.post('/webhook', async (req, res) => {
     });
   }
 
+  const has_virtual_staging = Array.isArray(services_a_la_cart) && services_a_la_cart.includes('VIRTUAL STAGING');
+  const has_virtual_cleaning = Array.isArray(services_a_la_cart) && services_a_la_cart.includes('VIRTUAL CLEANING');
+
   const { error } = await supabase
     .from('listings')
-    .insert({ order_id, agent_email, property_address, package_type });
+    .insert({ order_id, agent_email, property_address, package_type, has_virtual_staging, has_virtual_cleaning });
 
   if (error) {
     console.error('Supabase insert error:', error.message);
