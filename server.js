@@ -80,41 +80,58 @@ app.post('/webhook/dropbox', async (req, res) => {
   return res.status(200).json({ success: true, order_id, dropbox_folder_path });
 });
 
-app.post('/upload-photo', upload.single('photo'), async (req, res) => {
-  const { dropbox_folder_path } = req.body;
-  const file = req.file;
+app.post('/upload-photo', upload.array('photos'), async (req, res) => {
+  const { dropbox_folder_path, addon } = req.body;
+  const files = req.files;
 
-  if (!file || !dropbox_folder_path) {
-    return res.status(400).json({ success: false, error: 'Missing photo file or dropbox_folder_path' });
+  if (!files || files.length === 0 || !dropbox_folder_path) {
+    return res.status(400).json({ success: false, error: 'Missing photos or dropbox_folder_path' });
   }
 
   try {
     const accessToken = await getDropboxAccessToken();
-    const dropboxPath = `${dropbox_folder_path}/${file.originalname}`;
 
-    const uploadResponse = await fetch('https://content.dropboxapi.com/2/files/upload', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/octet-stream',
-        'Dropbox-API-Arg': JSON.stringify({
-          path: dropboxPath,
-          mode: 'add',
-          autorename: true,
-          mute: false,
-        }),
-      },
-      body: file.buffer,
-    });
-
-    const result = await uploadResponse.json();
-    if (result.error) {
-      console.error('[Upload] Dropbox error:', result.error);
-      return res.status(500).json({ success: false, error: result.error_summary || 'Upload failed' });
+    // Determine destination folders based on addon
+    const folders = [`${dropbox_folder_path}/PHOTOS`];
+    if (addon === 'stage' || addon === 'cleanThenStage') {
+      folders.push(`${dropbox_folder_path}/VIRTUAL STAGING`);
+    }
+    if (addon === 'clean') {
+      folders.push(`${dropbox_folder_path}/VIRTUAL CLEANING`);
     }
 
-    console.log(`[Upload] Uploaded ${file.originalname} → ${result.path_display}`);
-    return res.status(200).json({ success: true, path: result.path_display });
+    // Build all upload promises (every file × every folder)
+    const uploadPromises = [];
+    for (const file of files) {
+      for (const folder of folders) {
+        const dropboxPath = `${folder}/${file.originalname}`;
+        uploadPromises.push(
+          fetch('https://content.dropboxapi.com/2/files/upload', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/octet-stream',
+              'Dropbox-API-Arg': JSON.stringify({
+                path: dropboxPath,
+                mode: 'add',
+                autorename: true,
+              }),
+            },
+            body: file.buffer,
+          }).then(r => r.json())
+        );
+      }
+    }
+
+    const results = await Promise.all(uploadPromises);
+    const errors = results.filter(r => r.error);
+    if (errors.length > 0) {
+      console.error('[Upload] Some uploads failed:', errors);
+    }
+
+    const uploaded = results.length - errors.length;
+    console.log(`[Upload] ${uploaded}/${results.length} files uploaded (addon: ${addon || 'none'})`);
+    return res.status(200).json({ success: true, uploaded });
   } catch (err) {
     console.error('[Upload] Error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
