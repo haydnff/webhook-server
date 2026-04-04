@@ -80,6 +80,34 @@ app.post('/webhook/dropbox', async (req, res) => {
   return res.status(200).json({ success: true, order_id, dropbox_folder_path });
 });
 
+async function uploadFileToDropbox(accessToken, dropboxPath, fileBuffer, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const response = await fetch('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/octet-stream',
+        'Dropbox-API-Arg': JSON.stringify({
+          path: dropboxPath,
+          mode: 'add',
+          autorename: true,
+        }),
+      },
+      body: fileBuffer,
+    });
+    const result = await response.json();
+    if (!result.error) return result;
+    if (result.error?.reason?.['.tag'] === 'too_many_write_operations' && attempt < retries) {
+      const waitMs = ((result.error?.retry_after || 1) * 1000) + 500;
+      console.log(`[Upload] Rate limited, waiting ${waitMs}ms before retry ${attempt + 1}...`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    } else {
+      console.error(`[Upload] Failed after ${attempt} attempts:`, result.error_summary);
+      return result;
+    }
+  }
+}
+
 app.post('/upload-photo', upload.array('photos'), async (req, res) => {
   const { dropbox_folder_path, addon } = req.body;
   const files = req.files;
@@ -91,40 +119,25 @@ app.post('/upload-photo', upload.array('photos'), async (req, res) => {
   try {
     const accessToken = await getDropboxAccessToken();
 
-    // Determine destination folders based on addon
-    const folders = [`${dropbox_folder_path}/PHOTOS`];
-    if (addon === 'stage' || addon === 'cleanThenStage') {
-      folders.push(`${dropbox_folder_path}/VIRTUAL STAGING`);
-    }
-    if (addon === 'clean') {
-      folders.push(`${dropbox_folder_path}/VIRTUAL CLEANING`);
+    // Determine single destination folder based on addon
+    let folder;
+    switch (addon) {
+      case 'stage': folder = `${dropbox_folder_path}/upload-stage`; break;
+      case 'clean': folder = `${dropbox_folder_path}/upload-clean`; break;
+      case 'cleanThenStage': folder = `${dropbox_folder_path}/upload-clean-stage`; break;
+      default: folder = `${dropbox_folder_path}/upload-raw`; break;
     }
 
-    // Build all upload promises (every file × every folder)
-    const uploadPromises = [];
+    // Upload files sequentially with 300ms gap
+    const results = [];
     for (const file of files) {
-      for (const folder of folders) {
-        const dropboxPath = `${folder}/${file.originalname}`;
-        uploadPromises.push(
-          fetch('https://content.dropboxapi.com/2/files/upload', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${accessToken}`,
-              'Content-Type': 'application/octet-stream',
-              'Dropbox-API-Arg': JSON.stringify({
-                path: dropboxPath,
-                mode: 'add',
-                autorename: true,
-              }),
-            },
-            body: file.buffer,
-          }).then(r => r.json())
-        );
-      }
+      const dropboxPath = `${folder}/${file.originalname}`;
+      const result = await uploadFileToDropbox(accessToken, dropboxPath, file.buffer);
+      results.push(result);
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
 
-    const results = await Promise.all(uploadPromises);
-    const errors = results.filter(r => r.error);
+    const errors = results.filter(r => r && r.error);
     if (errors.length > 0) {
       console.error('[Upload] Some uploads failed:', errors);
     }
@@ -136,6 +149,40 @@ app.post('/upload-photo', upload.array('photos'), async (req, res) => {
     console.error('[Upload] Error:', err.message);
     return res.status(500).json({ success: false, error: err.message });
   }
+});
+
+app.post('/tonomo-completed', async (req, res) => {
+  const payload = req.body;
+  console.log('[Tonomo Completed] Payload:', JSON.stringify(payload));
+
+  const orderId = payload.order_id || payload.orderId || payload.id;
+
+  if (!orderId) {
+    console.error('[Tonomo Completed] No order ID found in payload');
+    return res.status(400).json({ error: 'No order ID found' });
+  }
+
+  const deliveryLink = payload.delivery_link || payload.deliveryLink || null;
+
+  const updateData = { status: 'completed' };
+  if (deliveryLink) updateData.delivery_link = deliveryLink;
+
+  const { error } = await supabase
+    .from('listings')
+    .update(updateData)
+    .eq('order_id', orderId);
+
+  if (error) {
+    console.error('[Tonomo Completed] Supabase update error:', error.message);
+    return res.status(500).json({ error: 'Failed to update listing' });
+  }
+
+  console.log(`[Tonomo Completed] Order ${orderId} marked as completed`);
+  return res.status(200).json({ success: true, order_id: orderId });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
 
 const PORT = process.env.PORT || 3000;
