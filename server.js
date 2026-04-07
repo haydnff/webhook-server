@@ -133,14 +133,22 @@ app.post('/webhook', async (req, res) => {
       collaborator_email: collaboratorEmail || null
     };
 
+    const { data: existingListing } = await supabase
+      .from('listings')
+      .select('id')
+      .eq('order_id', orderId)
+      .maybeSingle();
+
     const { error } = await supabase
       .from('listings')
       .upsert(listingData, { onConflict: 'order_id' });
     if (error) throw error;
-    console.log(`[Tonomo Webhook] Upserted listing for order ${orderId}`);
 
-    // Send welcome email to agent
-    try {
+    const isNewListing = !existingListing;
+    console.log(`[Tonomo Webhook] Upserted listing for order ${orderId} (${isNewListing ? 'new' : 'update'})`);
+
+    // Send welcome email to agent — only on new listings
+    if (isNewListing) try {
       const welcomeEmailHtml = `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
         <tr><td>
@@ -152,7 +160,7 @@ app.post('/webhook', async (req, res) => {
         <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;display:inline-block;line-height:56px;text-align:center;font-size:24px;font-weight:700;color:#ffffff;">L</div>
         </td></tr>
         <tr><td align="center" style="padding-bottom:10px;">
-        <p style="margin:0;font-size:20px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;line-height:1.8;">Listy<br>${propertyAddress.split(',')[0]}<br>is ready to shoot</p>
+        <p style="margin:0;font-size:20px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;line-height:2.2;">Listy<br>${propertyAddress.split(',')[0]}<br>is ready to shoot</p>
         </td></tr>
         <tr><td align="center" style="padding-bottom:36px;">
         <p style="margin:0;font-size:14px;color:#6C6C70;line-height:1.6;text-align:center;">Open Listy to get started.</p>
@@ -202,6 +210,7 @@ app.post('/webhook', async (req, res) => {
       }
     } catch (emailErr) {
       console.error('[Tonomo Webhook] Welcome email error:', emailErr.message);
+    }
     }
 
     // Send collaborator invite if email present
