@@ -164,7 +164,7 @@ app.post('/tonomo-completed', async (req, res) => {
 
   const deliveryLink = payload.delivery_link || payload.deliveryLink || null;
 
-  const updateData = { status: 'completed' };
+  const updateData = { status: 'completed', completed_at: new Date().toISOString() };
   if (deliveryLink) updateData.delivery_link = deliveryLink;
 
   const { error } = await supabase
