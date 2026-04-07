@@ -276,6 +276,88 @@ app.post('/dropbox-webhook', async (req, res) => {
   }
 });
 
+app.post('/send-collaborator-invite', async (req, res) => {
+  const { collaborator_email, property_address, agent_email } = req.body;
+
+  if (!collaborator_email || !property_address) {
+    return res.status(400).json({ error: 'Missing collaborator_email or property_address' });
+  }
+
+  console.log(`[Collaborator] Sending invite to ${collaborator_email} for ${property_address}`);
+
+  const emailHtml = `
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <tr><td>
+    <div style="display:none;max-height:0;overflow:hidden;font-size:1px;color:#ffffff;">You've been invited to collaborate on a shoot.&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+    </td></tr>
+    <tr><td align="center" style="padding:48px 24px;">
+    <table cellpadding="0" cellspacing="0" border="0" style="max-width:400px;width:100%;">
+
+    <tr><td align="center" style="padding-bottom:32px;">
+    <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;display:inline-block;line-height:56px;text-align:center;font-size:24px;font-weight:700;color:#ffffff;">L</div>
+    </td></tr>
+
+    <tr><td align="center" style="padding-bottom:10px;">
+    <p style="margin:0;font-size:23px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;">You're invited to collaborate</p>
+    </td></tr>
+
+    <tr><td align="center" style="padding-bottom:36px;">
+    <p style="margin:0;font-size:14px;color:#6C6C70;line-height:1.6;text-align:center;">You've been added as a collaborator for<br><strong style="color:#000000;">${property_address}</strong><br>Open Listy to access this listing.</p>
+    </td></tr>
+
+    <tr><td align="center" style="padding-bottom:32px;">
+    <table cellpadding="0" cellspacing="0" border="0">
+    <tr><td align="center" style="background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;border-radius:14px;">
+    <a href="https://listy.live" target="_blank" style="display:inline-block;padding:14px 48px;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;">Open Listy</a>
+    </td></tr>
+    </table>
+    </td></tr>
+
+    <tr><td style="padding-bottom:20px;">
+    <div style="height:1px;background-color:#E5E5EA;"></div>
+    </td></tr>
+
+    <tr><td style="padding-bottom:24px;">
+    <p style="margin:0;font-size:12px;color:#8E8E93;line-height:1.6;text-align:center;">Not you? Ignore this email — your account is safe.<br>Questions? <a href="mailto:hello@listy.live" style="color:#0A84FF;text-decoration:none;">hello@listy.live</a></p>
+    </td></tr>
+
+    <tr><td align="center">
+    <a href="https://listy.live" target="_blank" style="font-size:13px;font-weight:600;text-decoration:none;color:#0A84FF;">Listy</a>
+    </td></tr>
+
+    </table></td></tr>
+    </table>
+  `;
+
+  try {
+    const emailResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Listy <noreply@listy.live>',
+        to: collaborator_email,
+        subject: `You've been invited to collaborate — ${property_address}`,
+        html: emailHtml,
+      }),
+    });
+
+    const emailData = await emailResponse.json();
+    if (!emailResponse.ok) {
+      console.error('[Collaborator] Resend error:', emailData);
+      return res.status(500).json({ error: 'Failed to send invite email' });
+    }
+
+    console.log(`[Collaborator] Invite sent to ${collaborator_email} for ${property_address}`);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Collaborator] Error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
