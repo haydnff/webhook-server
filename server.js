@@ -109,13 +109,6 @@ app.post('/webhook', async (req, res) => {
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
 
-    // Check if listing already exists
-    const { data: existing } = await supabase
-      .from('listings')
-      .select('id')
-      .eq('order_id', orderId)
-      .single();
-
     const listingData = {
       order_id: orderId,
       agent_email: agentEmail,
@@ -140,22 +133,11 @@ app.post('/webhook', async (req, res) => {
       collaborator_email: collaboratorEmail || null
     };
 
-    if (existing) {
-      // Update existing listing
-      const { error } = await supabase
-        .from('listings')
-        .update(listingData)
-        .eq('order_id', orderId);
-      if (error) throw error;
-      console.log(`[Tonomo Webhook] Updated existing listing for order ${orderId}`);
-    } else {
-      // Insert new listing
-      const { error } = await supabase
-        .from('listings')
-        .insert(listingData);
-      if (error) throw error;
-      console.log(`[Tonomo Webhook] Created new listing for order ${orderId}`);
-    }
+    const { error } = await supabase
+      .from('listings')
+      .upsert(listingData, { onConflict: 'order_id' });
+    if (error) throw error;
+    console.log(`[Tonomo Webhook] Upserted listing for order ${orderId}`);
 
     // Send collaborator invite if email present
     if (collaboratorEmail) {
