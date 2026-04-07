@@ -148,7 +148,8 @@ app.post('/webhook', async (req, res) => {
     console.log(`[Tonomo Webhook] Upserted listing for order ${orderId} (${isNewListing ? 'new' : 'update'})`);
 
     // Send welcome email to agent — only on new listings
-    if (isNewListing) try {
+    if (isNewListing) {
+      try {
       const welcomeEmailHtml = `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
         <tr><td>
