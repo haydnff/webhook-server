@@ -391,7 +391,7 @@ app.post('/send-collaborator-invite', async (req, res) => {
   const emailHtml = `
     <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
     <tr><td>
-    <div style="display:none;max-height:0;overflow:hidden;font-size:1px;color:#ffffff;">You've been invited to collaborate on a shoot.&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+    <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#ffffff;line-height:1px;">Your listing is ready — open Listy to start shooting.&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
     </td></tr>
     <tr><td align="center" style="padding:48px 24px;">
     <table cellpadding="0" cellspacing="0" border="0" style="max-width:400px;width:100%;">
@@ -401,19 +401,23 @@ app.post('/send-collaborator-invite', async (req, res) => {
     </td></tr>
 
     <tr><td align="center" style="padding-bottom:10px;">
-    <p style="margin:0;font-size:23px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;">You're invited to collaborate</p>
+    <p style="margin:0;font-size:23px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;">Your listing is ready</p>
     </td></tr>
 
     <tr><td align="center" style="padding-bottom:36px;">
-    <p style="margin:0;font-size:14px;color:#6C6C70;line-height:1.6;text-align:center;">You've been added as a collaborator for<br><strong style="color:#000000;">${property_address}</strong><br>Open Listy to access this listing.</p>
+    <p style="margin:0;font-size:14px;color:#6C6C70;line-height:1.6;text-align:center;">${property_address}<br>Open Listy to start shooting.</p>
+    </td></tr>
+
+    <tr><td align="center" style="padding-bottom:16px;">
+    <table cellpadding="0" cellspacing="0" border="0">
+    <tr><td align="center" style="background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;border-radius:14px;">
+    <a href="listy://" target="_blank" style="display:inline-block;padding:14px 48px;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;">Open Listy</a>
+    </td></tr>
+    </table>
     </td></tr>
 
     <tr><td align="center" style="padding-bottom:32px;">
-    <table cellpadding="0" cellspacing="0" border="0">
-    <tr><td align="center" style="background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;border-radius:14px;">
-    <a href="https://listy.live" target="_blank" style="display:inline-block;padding:14px 48px;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;">Open Listy</a>
-    </td></tr>
-    </table>
+    <p style="margin:0;font-size:12px;color:#8E8E93;text-align:center;">Your listing is waiting in the app</p>
     </td></tr>
 
     <tr><td style="padding-bottom:20px;">
@@ -425,7 +429,7 @@ app.post('/send-collaborator-invite', async (req, res) => {
     </td></tr>
 
     <tr><td align="center">
-    <a href="https://listy.live" target="_blank" style="font-size:13px;font-weight:600;text-decoration:none;color:#0A84FF;">Listy</a>
+    <a href="https://listy.live" target="_blank" style="font-size:13px;font-weight:600;text-decoration:none;background:linear-gradient(135deg,#0A84FF,#BF5AF2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;color:#0A84FF;">Listy</a>
     </td></tr>
 
     </table></td></tr>
