@@ -45,6 +45,24 @@ app.post('/webhook', async (req, res) => {
   const propertyAddress = body.property_address?.formatted_address;
   const orderStatus = body.orderStatus;
 
+  if (orderStatus === 'cancelled') {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+    const { error } = await supabase
+      .from('listings')
+      .delete()
+      .eq('order_id', orderId);
+    if (error) {
+      console.error('[Tonomo Webhook] Failed to delete cancelled listing:', error);
+    } else {
+      console.log(`[Tonomo Webhook] Deleted cancelled listing for order ${orderId}`);
+    }
+    return res.status(200).json({ received: true });
+  }
+
   if (!orderId || !agentEmail || !propertyAddress) {
     console.error('[Tonomo Webhook] Missing required fields:', { orderId, agentEmail, propertyAddress });
     return res.status(400).json({ error: 'Missing required fields' });
