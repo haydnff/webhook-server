@@ -34,6 +34,7 @@ async function getDropboxAccessToken() {
 }
 
 app.post('/webhook', async (req, res) => {
+  console.log('[Tonomo Webhook] Full payload:', JSON.stringify(req.body, null, 2));
   const { order_id, agent_email, property_address, package_type, services_a_la_cart } = req.body;
 
   if (!order_id || !agent_email || !property_address || !package_type) {
