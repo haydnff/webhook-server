@@ -148,6 +148,7 @@ app.post('/webhook', async (req, res) => {
     console.log(`[Tonomo Webhook] Upserted listing for order ${orderId} (${isNewListing ? 'new' : 'update'})`);
 
     // Atomic claim — only one request can win per order_id
+    console.log(`[Tonomo Webhook] Status check: "${listingData.status}" === 'pending': ${listingData.status === 'pending'}`);
     if (listingData.status === 'pending') {
       const { data: claimed, error: claimError } = await supabase
         .from('listings')
