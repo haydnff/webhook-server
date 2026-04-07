@@ -149,16 +149,16 @@ app.post('/webhook', async (req, res) => {
 
     // Atomic claim — only one request can win per order_id
     if (listingData.status === 'pending') {
-      const { data: claim, error: claimError } = await supabase
-        .from('email_sent_log')
-        .upsert(
-          { order_id: orderId },
-          { onConflict: 'order_id', ignoreDuplicates: true }
-        )
+      const { data: claimed, error: claimError } = await supabase
+        .from('listings')
+        .update({ welcome_email_sent: true })
+        .eq('order_id', orderId)
+        .eq('welcome_email_sent', false)
         .select();
 
-      if (!claimError && claim && claim.length > 0) {
-        // This request won the race — send welcome email
+      if (claimError) {
+        console.error('[Tonomo Webhook] Claim error:', JSON.stringify(claimError));
+      } else if (claimed && claimed.length > 0) {
         try {
           const welcomeEmailHtml = `
             <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
@@ -218,14 +218,11 @@ app.post('/webhook', async (req, res) => {
           } else {
             const err = await welcomeRes.json();
             console.error('[Tonomo Webhook] Welcome email failed:', err);
-            // Remove claim so it can retry
-            await supabase.from('email_sent_log').delete().eq('order_id', orderId);
           }
         } catch (emailErr) {
           console.error('[Tonomo Webhook] Welcome email error:', emailErr.message);
-          await supabase.from('email_sent_log').delete().eq('order_id', orderId);
         }
-      } else if (!claimError) {
+      } else {
         console.log(`[Tonomo Webhook] Email already sent for order ${orderId}, skipping`);
       }
     }
