@@ -147,71 +147,87 @@ app.post('/webhook', async (req, res) => {
     const isNewListing = !existingListing;
     console.log(`[Tonomo Webhook] Upserted listing for order ${orderId} (${isNewListing ? 'new' : 'update'})`);
 
-    // Send welcome email to agent — only on new listings
+    // Atomic claim — only one request can win per order_id
     if (listingData.status === 'pending') {
-      try {
-      const welcomeEmailHtml = `
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-        <tr><td>
-        <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#ffffff;line-height:1px;">is ready to shoot&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
-        </td></tr>
-        <tr><td align="center" style="padding:48px 24px;">
-        <table cellpadding="0" cellspacing="0" border="0" style="max-width:400px;width:100%;">
-        <tr><td align="center" style="padding-bottom:32px;">
-        <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;display:inline-block;line-height:56px;text-align:center;font-size:24px;font-weight:700;color:#ffffff;">L</div>
-        </td></tr>
-        <tr><td align="center" style="padding-bottom:10px;">
-        <p style="margin:0;font-size:20px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;line-height:2.2;">Listy<br>${propertyAddress.split(',')[0]}<br>is ready to shoot</p>
-        </td></tr>
-        <tr><td align="center" style="padding-bottom:36px;">
-        <p style="margin:0;font-size:14px;color:#6C6C70;line-height:1.6;text-align:center;">Open Listy to get started.</p>
-        </td></tr>
-        <tr><td align="center" style="padding-bottom:16px;">
-        <table cellpadding="0" cellspacing="0" border="0">
-        <tr><td align="center" style="background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;border-radius:14px;">
-        <a href="https://listy.live/open" target="_blank" style="display:inline-block;padding:14px 48px;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;">Open Listy</a>
-        </td></tr>
-        </table>
-        </td></tr>
-        <tr><td align="center" style="padding-bottom:32px;">
-        <p style="margin:0;font-size:12px;color:#8E8E93;text-align:center;">Your listing is waiting in the app</p>
-        </td></tr>
-        <tr><td style="padding-bottom:20px;">
-        <div style="height:1px;background-color:#E5E5EA;"></div>
-        </td></tr>
-        <tr><td style="padding-bottom:24px;">
-        <p style="margin:0;font-size:12px;color:#8E8E93;line-height:1.6;text-align:center;">Questions? <a href="mailto:hello@listy.live" style="color:#0A84FF;text-decoration:none;">hello@listy.live</a></p>
-        </td></tr>
-        <tr><td align="center">
-        <a href="https://listy.live" target="_blank" style="font-size:13px;font-weight:600;text-decoration:none;background:linear-gradient(135deg,#0A84FF,#BF5AF2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;color:#0A84FF;">Listy</a>
-        </td></tr>
-        </table></td></tr>
-        </table>
-      `;
+      const { data: claim, error: claimError } = await supabase
+        .from('email_sent_log')
+        .upsert(
+          { order_id: orderId },
+          { onConflict: 'order_id', ignoreDuplicates: true }
+        )
+        .select();
 
-      const welcomeRes = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: 'Listy <noreply@listy.live>',
-          to: agentEmail,
-          subject: `${propertyAddress.split(',')[0]}`,
-          html: welcomeEmailHtml,
-        }),
-      });
+      if (!claimError && claim && claim.length > 0) {
+        // This request won the race — send welcome email
+        try {
+          const welcomeEmailHtml = `
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <tr><td>
+            <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#ffffff;line-height:1px;">is ready to shoot&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div>
+            </td></tr>
+            <tr><td align="center" style="padding:48px 24px;">
+            <table cellpadding="0" cellspacing="0" border="0" style="max-width:400px;width:100%;">
+            <tr><td align="center" style="padding-bottom:32px;">
+            <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;display:inline-block;line-height:56px;text-align:center;font-size:24px;font-weight:700;color:#ffffff;">L</div>
+            </td></tr>
+            <tr><td align="center" style="padding-bottom:10px;">
+            <p style="margin:0;font-size:20px;font-weight:700;color:#000000;letter-spacing:-0.4px;text-align:center;line-height:2.2;">Listy<br>${propertyAddress.split(',')[0]}<br>is ready to shoot</p>
+            </td></tr>
+            <tr><td align="center" style="padding-bottom:36px;">
+            <p style="margin:0;font-size:14px;color:#6C6C70;line-height:1.6;text-align:center;">Open Listy to get started.</p>
+            </td></tr>
+            <tr><td align="center" style="padding-bottom:16px;">
+            <table cellpadding="0" cellspacing="0" border="0">
+            <tr><td align="center" style="background:linear-gradient(135deg,#0A84FF,#BF5AF2);background-color:#0A84FF;border-radius:14px;">
+            <a href="https://listy.live/open" target="_blank" style="display:inline-block;padding:14px 48px;color:#ffffff;font-size:16px;font-weight:600;text-decoration:none;">Open Listy</a>
+            </td></tr>
+            </table>
+            </td></tr>
+            <tr><td align="center" style="padding-bottom:32px;">
+            <p style="margin:0;font-size:12px;color:#8E8E93;text-align:center;">Your listing is waiting in the app</p>
+            </td></tr>
+            <tr><td style="padding-bottom:20px;">
+            <div style="height:1px;background-color:#E5E5EA;"></div>
+            </td></tr>
+            <tr><td style="padding-bottom:24px;">
+            <p style="margin:0;font-size:12px;color:#8E8E93;line-height:1.6;text-align:center;">Questions? <a href="mailto:hello@listy.live" style="color:#0A84FF;text-decoration:none;">hello@listy.live</a></p>
+            </td></tr>
+            <tr><td align="center">
+            <a href="https://listy.live" target="_blank" style="font-size:13px;font-weight:600;text-decoration:none;background:linear-gradient(135deg,#0A84FF,#BF5AF2);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;color:#0A84FF;">Listy</a>
+            </td></tr>
+            </table></td></tr>
+            </table>
+          `;
 
-      if (welcomeRes.ok) {
-        console.log(`[Tonomo Webhook] Welcome email sent to ${agentEmail}`);
-      } else {
-        const err = await welcomeRes.json();
-        console.error('[Tonomo Webhook] Welcome email failed:', err);
+          const welcomeRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from: 'Listy <noreply@listy.live>',
+              to: agentEmail,
+              subject: `${propertyAddress.split(',')[0]}`,
+              html: welcomeEmailHtml,
+            }),
+          });
+
+          if (welcomeRes.ok) {
+            console.log(`[Tonomo Webhook] Welcome email sent to ${agentEmail}`);
+          } else {
+            const err = await welcomeRes.json();
+            console.error('[Tonomo Webhook] Welcome email failed:', err);
+            // Remove claim so it can retry
+            await supabase.from('email_sent_log').delete().eq('order_id', orderId);
+          }
+        } catch (emailErr) {
+          console.error('[Tonomo Webhook] Welcome email error:', emailErr.message);
+          await supabase.from('email_sent_log').delete().eq('order_id', orderId);
+        }
+      } else if (!claimError) {
+        console.log(`[Tonomo Webhook] Email already sent for order ${orderId}, skipping`);
       }
-    } catch (emailErr) {
-      console.error('[Tonomo Webhook] Welcome email error:', emailErr.message);
-    }
     }
 
     // Send collaborator invite if email present
