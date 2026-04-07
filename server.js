@@ -34,28 +34,148 @@ async function getDropboxAccessToken() {
 }
 
 app.post('/webhook', async (req, res) => {
-  console.log('[Tonomo Webhook] Full payload:', JSON.stringify(req.body, null, 2));
-  const { order_id, agent_email, property_address, package_type, services_a_la_cart } = req.body;
+  // Log condensed version only to avoid rate limiting
+  console.log('[Tonomo Webhook] Received order:', req.body?.orderId, '| status:', req.body?.orderStatus, '| email:', req.body?.email);
 
-  if (!order_id || !agent_email || !property_address || !package_type) {
-    return res.status(400).json({
-      error: 'Missing required fields: order_id, agent_email, property_address, package_type',
-    });
+  const body = req.body;
+
+  // Core fields
+  const orderId = body.orderId || body.invoiceId;
+  const agentEmail = body.email || body.listingAgents?.[0]?.email;
+  const propertyAddress = body.property_address?.formatted_address;
+  const orderStatus = body.orderStatus;
+
+  if (!orderId || !agentEmail || !propertyAddress) {
+    console.error('[Tonomo Webhook] Missing required fields:', { orderId, agentEmail, propertyAddress });
+    return res.status(400).json({ error: 'Missing required fields' });
   }
 
-  const has_virtual_staging = Array.isArray(services_a_la_cart) && services_a_la_cart.includes('VIRTUAL STAGING');
-  const has_virtual_cleaning = Array.isArray(services_a_la_cart) && services_a_la_cart.includes('VIRTUAL CLEANING');
+  // Parse services ordered
+  const servicesOrdered = body.services_a_la_cart || [];
+  const hasVirtualStaging = servicesOrdered.includes('Virtual Staging');
+  const hasVirtualCleaning = servicesOrdered.includes('Virtual Cleaning');
+  const hasVirtualTwilight = servicesOrdered.includes('Virtual Twilight');
+  const hasVideo = servicesOrdered.includes('Photo to Video');
 
-  const { error } = await supabase
-    .from('listings')
-    .insert({ order_id, agent_email, property_address, package_type, has_virtual_staging, has_virtual_cleaning });
-
-  if (error) {
-    console.error('Supabase insert error:', error.message);
-    return res.status(500).json({ error: 'Failed to save listing' });
+  // Helper to parse photo count from tier name like "25 Photos" or "3 Photos"
+  function parseTierCount(name) {
+    if (!name) return null;
+    const match = name.match(/^(\d+)/);
+    return match ? parseInt(match[1]) : null;
   }
 
-  return res.status(200).json({ success: true, order_id });
+  // Parse limits from service_custom_tiers
+  const tiers = body.service_custom_tiers || [];
+  let photoLimit = 25;
+  let virtualStagingLimit = null;
+  let virtualCleaningLimit = null;
+  let virtualTwilightLimit = null;
+  let videoPhotoLimit = 20;
+  let packageType = 'Standard';
+
+  for (const tier of tiers) {
+    const name = tier.serviceName;
+    const selectedName = tier.selected?.name;
+    const count = parseTierCount(selectedName);
+
+    if (name === 'Listing Photos') {
+      if (count) photoLimit = count;
+      packageType = selectedName || 'Standard';
+    } else if (name === 'Virtual Staging' && count) {
+      virtualStagingLimit = count;
+    } else if (name === 'Virtual Cleaning' && count) {
+      virtualCleaningLimit = count;
+    } else if (name === 'Virtual Twilight' && count) {
+      virtualTwilightLimit = count;
+    } else if (name === 'Photo to Video' && count) {
+      videoPhotoLimit = count;
+    }
+  }
+
+  // Parse collaborator email from customQuestions
+  const customQuestions = body.customQuestions || [];
+  const collabQuestion = customQuestions.find(q => q.label === 'Collaborator Email');
+  const collaboratorEmail = collabQuestion?.value?.trim() || null;
+
+  // Build Dropbox folder path
+  const dropboxFolderPath = `/Listy/${agentEmail}/${propertyAddress.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '-')}-${orderId}`;
+
+  console.log(`[Tonomo Webhook] Parsed: photos=${photoLimit}, staging=${virtualStagingLimit}, cleaning=${virtualCleaningLimit}, twilight=${virtualTwilightLimit}, video=${hasVideo}, collaborator=${collaboratorEmail}`);
+
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+
+    // Check if listing already exists
+    const { data: existing } = await supabase
+      .from('listings')
+      .select('id')
+      .eq('order_id', orderId)
+      .single();
+
+    const listingData = {
+      order_id: orderId,
+      agent_email: agentEmail,
+      property_address: propertyAddress,
+      package_type: packageType,
+      photo_limit: photoLimit,
+      status: 'pending',
+      dropbox_folder_path: dropboxFolderPath,
+      has_virtual_staging: hasVirtualStaging,
+      has_virtual_cleaning: hasVirtualCleaning,
+      has_virtual_twilight: hasVirtualTwilight,
+      has_video: hasVideo,
+      virtual_staging_limit: virtualStagingLimit,
+      virtual_cleaning_limit: virtualCleaningLimit,
+      virtual_twilight_limit: virtualTwilightLimit,
+      video_photo_limit: videoPhotoLimit,
+      virtual_staging_used: 0,
+      virtual_cleaning_used: 0,
+      virtual_twilight_used: 0,
+      video_photos_used: 0,
+      photos_uploaded: false,
+      collaborator_email: collaboratorEmail || null
+    };
+
+    if (existing) {
+      // Update existing listing
+      const { error } = await supabase
+        .from('listings')
+        .update(listingData)
+        .eq('order_id', orderId);
+      if (error) throw error;
+      console.log(`[Tonomo Webhook] Updated existing listing for order ${orderId}`);
+    } else {
+      // Insert new listing
+      const { error } = await supabase
+        .from('listings')
+        .insert(listingData);
+      if (error) throw error;
+      console.log(`[Tonomo Webhook] Created new listing for order ${orderId}`);
+    }
+
+    // Send collaborator invite if email present
+    if (collaboratorEmail) {
+      try {
+        const { signInWithOTP } = await import('@supabase/supabase-js');
+        await supabase.auth.admin.generateLink({
+          type: 'magiclink',
+          email: collaboratorEmail
+        });
+        console.log(`[Tonomo Webhook] Sent collaborator invite to ${collaboratorEmail}`);
+      } catch (inviteErr) {
+        console.error('[Tonomo Webhook] Collaborator invite failed:', inviteErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, orderId });
+  } catch (err) {
+    console.error('[Tonomo Webhook] Database error:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 app.post('/webhook/dropbox', async (req, res) => {
