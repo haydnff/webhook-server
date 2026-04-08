@@ -572,6 +572,63 @@ app.post('/send-collaborator-invite', async (req, res) => {
   }
 });
 
+// AI Composition Coach — proxies image to Claude Haiku for real-time coaching
+app.post('/ai-coach', async (req, res) => {
+  const { image } = req.body;
+  if (!image) {
+    return res.status(400).json({ error: 'Missing image' });
+  }
+
+  const prompt = `You are a real estate photography coach. The agent is about to take a photo.
+Look at this viewfinder frame and give ONE specific actionable suggestion in under 10 words.
+Examples: "Move left to center the island", "Step back to show more ceiling", "Open the blinds for more light".
+Only respond with the suggestion, nothing else. No punctuation at the end.`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 50,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: 'image/jpeg',
+                data: image,
+              },
+            },
+            {
+              type: 'text',
+              text: prompt,
+            },
+          ],
+        }],
+      }),
+    });
+
+    const data = await response.json();
+    if (data.content && data.content[0] && data.content[0].text) {
+      console.log(`[AICoach] Suggestion: ${data.content[0].text}`);
+      return res.status(200).json({ suggestion: data.content[0].text.trim() });
+    } else {
+      console.error('[AICoach] Unexpected response:', JSON.stringify(data));
+      return res.status(500).json({ error: 'No suggestion returned' });
+    }
+  } catch (err) {
+    console.error('[AICoach] Error:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
