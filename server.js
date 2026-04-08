@@ -33,6 +33,39 @@ async function getDropboxAccessToken() {
   return data.access_token;
 }
 
+app.post('/dropbox-token', async (req, res) => {
+  try {
+    const credentials = Buffer.from(
+      `${process.env.DROPBOX_APP_KEY}:${process.env.DROPBOX_APP_SECRET}`
+    ).toString('base64');
+
+    const response = await fetch('https://api.dropbox.com/oauth2/token', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${credentials}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: process.env.DROPBOX_REFRESH_TOKEN,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[Dropbox Token] Error:', data);
+      return res.status(500).json({ error: 'Failed to get Dropbox token' });
+    }
+
+    console.log('[Dropbox Token] Token refreshed successfully');
+    return res.json({ access_token: data.access_token });
+  } catch (err) {
+    console.error('[Dropbox Token] Server error:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.post('/webhook', async (req, res) => {
   // Log condensed version only to avoid rate limiting
   console.log('[Tonomo Webhook] Received order:', req.body?.orderId, '| status:', req.body?.orderStatus, '| email:', req.body?.email);
