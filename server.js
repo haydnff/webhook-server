@@ -574,17 +574,70 @@ app.post('/send-collaborator-invite', async (req, res) => {
 
 // AI Composition Coach — proxies image to Claude Haiku for real-time coaching
 app.post('/ai-coach', async (req, res) => {
-  const { image } = req.body;
-  if (!image) {
-    return res.status(400).json({ error: 'Missing image' });
-  }
-
-  const prompt = `You are a real estate photography coach. The agent is about to take a photo.
-Look at this viewfinder frame and give ONE specific actionable suggestion in under 10 words.
-Examples: "Move left to center the island", "Step back to show more ceiling", "Open the blinds for more light".
-Only respond with the suggestion, nothing else. No punctuation at the end.`;
-
   try {
+    const { imageBase64, roomType, pitchDegrees, rollDegrees, estimatedHeight } = req.body;
+
+    if (!imageBase64) {
+      return res.status(400).json({ error: 'Missing image data' });
+    }
+
+    const room = roomType || 'unknown room';
+    const pitch = pitchDegrees ? `${parseFloat(pitchDegrees).toFixed(1)}°` : 'unknown';
+    const roll = rollDegrees ? `${parseFloat(rollDegrees).toFixed(1)}°` : 'unknown';
+    const height = estimatedHeight ? `${parseFloat(estimatedHeight).toFixed(1)} feet` : 'unknown';
+
+    const roomHeightGuide = {
+      kitchen: '5.0–5.5 feet (15–20 inches above countertop)',
+      bathroom: '5.0–5.5 feet (above vanity height)',
+      bedroom: '4.5–5.0 feet (15–20 inches above bed)',
+      'living room': '3.5–4.5 feet (waist to chest height)',
+      'dining room': '4.0–5.0 feet (slightly above table height)',
+      exterior: '5.0–6.0 feet (standing chest height)',
+    };
+
+    const idealHeight = roomHeightGuide[room.toLowerCase()] || '4.0–5.5 feet (chest height)';
+
+    const systemPrompt = `You are a professional real estate photography composition coach. A photographer is looking through their iPhone viewfinder RIGHT NOW and needs immediate position adjustments before pressing the shutter.
+
+ANALYZE ONLY THESE THINGS (in priority order):
+1. Camera height — is it at the ideal height for this room type?
+2. Camera position — should they step back, forward, left, or right?
+3. What is being cut off at the frame edges that should be visible?
+4. Whether they are shooting from a corner (diagonal depth) or flat against a wall
+5. Whether key selling features of this room are prominently framed
+
+IDEAL HEIGHT FOR ${room.toUpperCase()}: ${idealHeight}
+CURRENT SENSOR DATA: pitch ${pitch}, roll ${roll}, estimated height ${height}
+
+DO NOT MENTION UNDER ANY CIRCUMSTANCES:
+- Exposure, brightness, darkness, or lighting
+- Leveling, tilt, or whether the camera is straight (another tool handles this)
+- Sharpness, focus, blur, or image quality
+- Staging, decluttering, or property condition
+- Post-processing or editing suggestions
+
+RESPONSE FORMAT — follow exactly:
+- Give exactly ONE action directive
+- Start with an ALL-CAPS action verb: LOWER, RAISE, STEP BACK, STEP FORWARD, SHIFT LEFT, SHIFT RIGHT, MOVE TO THE CORNER, INCLUDE
+- Add a specific spatial reference in parentheses e.g. (to chest height), (2 feet), (to show the full window)
+- One short clause starting with "—" explaining the composition benefit
+- Maximum 12 words total
+- No punctuation at the end
+- No greeting, no explanation, just the directive
+
+GOOD EXAMPLES:
+LOWER (to countertop height) — shows full counter surface buyers care about
+STEP BACK (3 feet) — left sofa arm is cut off
+MOVE TO THE CORNER — diagonal depth makes room feel larger
+SHIFT RIGHT (1 step) — include the window for natural light framing
+RAISE (to eye level) — too much floor visible, not enough ceiling
+
+BAD EXAMPLES (never do this):
+"The image appears quite dark..." — mentions exposure, forbidden
+"Try leveling the camera..." — mentions leveling, forbidden
+"You might want to consider..." — not an action directive
+"Great framing! Just..." — greeting, forbidden`;
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -594,38 +647,44 @@ Only respond with the suggestion, nothing else. No punctuation at the end.`;
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 50,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: 'image/jpeg',
-                data: image,
+        max_tokens: 60,
+        system: systemPrompt,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: 'image/jpeg',
+                  data: imageBase64,
+                },
               },
-            },
-            {
-              type: 'text',
-              text: prompt,
-            },
-          ],
-        }],
+              {
+                type: 'text',
+                text: `Room type: ${room}\nCamera sensor data: pitch ${pitch}, roll ${roll}, estimated height ${height}\nGive me ONE composition adjustment directive now.`,
+              },
+            ],
+          },
+        ],
       }),
     });
 
     const data = await response.json();
-    if (data.content && data.content[0] && data.content[0].text) {
-      console.log(`[AICoach] Suggestion: ${data.content[0].text}`);
-      return res.status(200).json({ suggestion: data.content[0].text.trim() });
-    } else {
-      console.error('[AICoach] Unexpected response:', JSON.stringify(data));
-      return res.status(500).json({ error: 'No suggestion returned' });
+
+    if (!response.ok) {
+      console.error('[AI Coach] Anthropic error:', data);
+      return res.status(500).json({ error: 'AI analysis failed' });
     }
+
+    const suggestion = data.content?.[0]?.text?.trim();
+    console.log(`[AI Coach] Room: ${room} | Height: ${height} | Pitch: ${pitch} | Suggestion: ${suggestion}`);
+    return res.json({ suggestion });
+
   } catch (err) {
-    console.error('[AICoach] Error:', err.message);
-    return res.status(500).json({ error: err.message });
+    console.error('[AI Coach] Error:', err.message);
+    return res.status(500).json({ error: 'Server error' });
   }
 });
 
