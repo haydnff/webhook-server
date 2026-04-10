@@ -435,7 +435,7 @@ app.get('/dropbox-webhook', (req, res) => {
 
 // Dropbox webhook notification — fires when files change in Dropbox
 app.post('/dropbox-webhook', async (req, res) => {
-  console.log('[Dropbox Webhook] Notification received:', JSON.stringify(req.body));
+  console.log('[Dropbox Webhook] Notification received');
 
   // Respond immediately — Dropbox requires a fast response or it retries
   res.status(200).json({ success: true });
@@ -444,80 +444,165 @@ app.post('/dropbox-webhook', async (req, res) => {
   try {
     const accessToken = await getDropboxAccessToken();
 
-    // Get list of changed paths from the webhook payload
     const accounts = req.body?.list_folder?.accounts || [];
     if (accounts.length === 0) {
       console.log('[Dropbox Webhook] No accounts in payload, skipping');
       return;
     }
 
-    // For each changed account, list recent changes
     for (const accountId of accounts) {
-      const changesResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ cursor: accountId }),
-      });
+      // Get cursor for this account (we need to use list_folder, not continue with accountId)
+      // Dropbox webhooks just notify that something changed — we check known paths
+      console.log('[Dropbox Webhook] Processing account:', accountId);
 
-      const changes = await changesResponse.json();
-      console.log('[Dropbox Webhook] Changes:', JSON.stringify(changes));
+      // Check all listings that have uploaded photos and have an AutoHDR path
+      const { data: pendingListings, error: queryError } = await supabase
+        .from('listings')
+        .select('*')
+        .eq('photos_uploaded', true)
+        .neq('status', 'completed')
+        .not('dropbox_autohdr_path', 'is', null);
 
-      // Look for files landing in a PHOTOS delivery folder
-      const entries = changes?.entries || [];
-      for (const entry of entries) {
-        const path = entry?.path_lower || '';
+      if (queryError) {
+        console.error('[Dropbox Webhook] Supabase query error:', queryError.message);
+        continue;
+      }
 
-        // Check if file landed in a PHOTOS delivery folder
-        // Expected path pattern: /tonomo/[agent]/[address]/photos/[file]
-        if (path.includes('/photos/') && !path.includes('/listy-')) {
-          console.log('[Dropbox Webhook] Delivery file detected:', path);
+      if (!pendingListings || pendingListings.length === 0) {
+        console.log('[Dropbox Webhook] No pending AutoHDR listings');
+        continue;
+      }
 
-          // Extract the listing folder path — everything up to /photos/
-          const folderPath = path.substring(0, path.toLowerCase().indexOf('/photos/'));
-
-          if (!folderPath) continue;
-
-          // Find the listing in Supabase by matching dropbox_folder_path
-          const { data: listings, error } = await supabase
-            .from('listings')
-            .select('*')
-            .ilike('dropbox_folder_path', folderPath)
-            .eq('photos_uploaded', true)
-            .neq('status', 'completed');
-
-          if (error) {
-            console.error('[Dropbox Webhook] Supabase query error:', error.message);
-            continue;
-          }
-
-          if (!listings || listings.length === 0) {
-            console.log('[Dropbox Webhook] No matching listing found for path:', folderPath);
-            continue;
-          }
-
-          const listing = listings[0];
-          console.log(`[Dropbox Webhook] Marking listing ${listing.id} (order ${listing.order_id}) as completed`);
-
-          const { error: updateError } = await supabase
-            .from('listings')
-            .update({ status: 'completed' })
-            .eq('id', listing.id);
-
-          if (updateError) {
-            console.error('[Dropbox Webhook] Failed to update status:', updateError.message);
-          } else {
-            console.log(`[Dropbox Webhook] ✅ Order ${listing.order_id} marked as completed`);
-          }
-        }
+      for (const listing of pendingListings) {
+        await checkAutoHDRCompletion(listing, accessToken);
       }
     }
   } catch (err) {
     console.error('[Dropbox Webhook] Processing error:', err.message);
   }
 });
+
+// MARK: - AutoHDR Completion Pipeline
+
+async function checkAutoHDRCompletion(listing, accessToken) {
+  const basePath = listing.dropbox_autohdr_path; // e.g. /AutoHDR/123 Main St
+  if (!basePath) return;
+
+  const services = [];
+  // Standard is always expected
+  services.push('standard');
+  if (listing.has_virtual_staging) services.push('staging');
+  if (listing.has_virtual_cleaning) services.push('cleaning');
+  if (listing.has_virtual_twilight) services.push('twilight');
+  if (listing.has_video) services.push('video');
+
+  const expectedPhotos = Math.floor((listing.photo_limit > 0 ? Math.min(listing.photos_taken || 0, listing.photo_limit) : 0));
+
+  for (const service of services) {
+    const finalPath = `${basePath}/${service}/04-FINAL-Photos`;
+    const completionField = `autohdr_complete_${service}`;
+
+    // Skip if already marked complete for this service
+    if (listing[completionField] === true) continue;
+
+    // Check if 04-FINAL-Photos folder exists and has files
+    try {
+      const listResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ path: finalPath, limit: 2000 }),
+      });
+
+      const listData = await listResponse.json();
+
+      if (listData.error) {
+        // Folder doesn't exist yet — not ready
+        continue;
+      }
+
+      const files = (listData.entries || []).filter(e => e['.tag'] === 'file');
+      console.log(`[AutoHDR] ${listing.order_id} | ${service} | ${files.length} files in 04-FINAL-Photos (expected ~${expectedPhotos})`);
+
+      if (files.length === 0) continue;
+
+      // For standard: expect roughly photos_taken count (each bracket set produces 1 final photo)
+      // For other services: expect the count matching the used count from Supabase
+      let expectedCount = expectedPhotos;
+      if (service === 'staging') expectedCount = listing.virtual_staging_used || 0;
+      if (service === 'cleaning') expectedCount = listing.virtual_cleaning_used || 0;
+      if (service === 'twilight') expectedCount = listing.virtual_twilight_used || 0;
+      if (service === 'video') expectedCount = listing.video_photos_used || 0;
+
+      if (expectedCount === 0) expectedCount = 1; // At least 1 file expected
+
+      if (files.length < expectedCount) {
+        console.log(`[AutoHDR] ${listing.order_id} | ${service} | Not enough files yet (${files.length}/${expectedCount})`);
+        continue;
+      }
+
+      // Service is complete!
+      console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete (${files.length} files)`);
+
+      // Update Supabase
+      const updateData = {};
+      updateData[completionField] = true;
+      updateData['updated_at'] = new Date().toISOString();
+
+      const { error: updateError } = await supabase
+        .from('listings')
+        .update(updateData)
+        .eq('id', listing.id);
+
+      if (updateError) {
+        console.error(`[AutoHDR] Failed to update ${completionField}:`, updateError.message);
+      }
+
+    } catch (err) {
+      console.error(`[AutoHDR] Error checking ${service} for listing ${listing.id}:`, err.message);
+    }
+  }
+
+  // Check if ALL services are complete
+  await checkAllServicesComplete(listing);
+}
+
+async function checkAllServicesComplete(listing) {
+  // Re-fetch listing to get latest state
+  const { data: updated, error } = await supabase
+    .from('listings')
+    .select('*')
+    .eq('id', listing.id)
+    .single();
+
+  if (error || !updated) return;
+
+  const requiredServices = ['standard'];
+  if (updated.has_virtual_staging) requiredServices.push('staging');
+  if (updated.has_virtual_cleaning) requiredServices.push('cleaning');
+  if (updated.has_virtual_twilight) requiredServices.push('twilight');
+  if (updated.has_video) requiredServices.push('video');
+
+  const allComplete = requiredServices.every(s => updated[`autohdr_complete_${s}`] === true);
+
+  if (allComplete) {
+    console.log(`[AutoHDR] ✅✅ All services complete for ${updated.order_id} — marking delivery_ready`);
+
+    const { error: statusError } = await supabase
+      .from('listings')
+      .update({
+        status: 'completed',
+        completed_at: new Date().toISOString(),
+      })
+      .eq('id', updated.id);
+
+    if (statusError) {
+      console.error('[AutoHDR] Failed to set delivery_ready:', statusError.message);
+    }
+  }
+}
 
 app.post('/send-collaborator-invite', async (req, res) => {
   const { collaborator_email, property_address, agent_email } = req.body;
