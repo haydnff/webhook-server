@@ -488,25 +488,28 @@ async function checkAutoHDRCompletion(listing, accessToken) {
   const basePath = listing.dropbox_autohdr_path; // e.g. /AutoHDR/123 Main St
   if (!basePath) return;
 
-  const services = [];
-  // Standard is always expected
-  services.push('standard');
-  if (listing.has_virtual_staging) services.push('staging');
-  if (listing.has_virtual_cleaning) services.push('cleaning');
-  if (listing.has_virtual_twilight) services.push('twilight');
-  if (listing.has_video) services.push('video');
+  // Extract address from basePath for delivery folder
+  const address = basePath.replace('/AutoHDR/', '');
+  const deliveryBase = `/Clients/${address}`;
 
-  const expectedPhotos = Math.floor((listing.photo_limit > 0 ? Math.min(listing.photos_taken || 0, listing.photo_limit) : 0));
+  // Determine which service folders to check based on what was uploaded
+  const services = ['standard'];
+  if (listing.virtual_staging_used > 0) services.push('staging');
+  if (listing.virtual_cleaning_used > 0) services.push('cleaning');
+  if (listing.virtual_cleaning_used > 0 && listing.virtual_staging_used > 0) services.push('clean-stage');
+  if (listing.virtual_twilight_used > 0) services.push('twilight');
+  if (listing.video_photos_used > 0) services.push('video');
 
   for (const service of services) {
     const finalPath = `${basePath}/${service}/04-FINAL-Photos`;
-    const completionField = `autohdr_complete_${service}`;
+    const completionKey = service.replace('-', '_'); // clean-stage → clean_stage
+    const completionField = `autohdr_complete_${completionKey}`;
 
-    // Skip if already marked complete for this service
+    // Skip if already marked complete
     if (listing[completionField] === true) continue;
 
-    // Check if 04-FINAL-Photos folder exists and has files
     try {
+      // Check if 04-FINAL-Photos folder exists and has files
       const listResponse = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
         method: 'POST',
         headers: {
@@ -517,34 +520,28 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       });
 
       const listData = await listResponse.json();
-
-      if (listData.error) {
-        // Folder doesn't exist yet — not ready
-        continue;
-      }
+      if (listData.error) continue; // Folder doesn't exist yet
 
       const files = (listData.entries || []).filter(e => e['.tag'] === 'file');
-      console.log(`[AutoHDR] ${listing.order_id} | ${service} | ${files.length} files in 04-FINAL-Photos (expected ~${expectedPhotos})`);
-
       if (files.length === 0) continue;
 
-      // For standard: expect roughly photos_taken count (each bracket set produces 1 final photo)
-      // For other services: expect the count matching the used count from Supabase
-      let expectedCount = expectedPhotos;
-      if (service === 'staging') expectedCount = listing.virtual_staging_used || 0;
-      if (service === 'cleaning') expectedCount = listing.virtual_cleaning_used || 0;
-      if (service === 'twilight') expectedCount = listing.virtual_twilight_used || 0;
-      if (service === 'video') expectedCount = listing.video_photos_used || 0;
+      // Determine expected count
+      let expectedCount = 1;
+      if (service === 'standard') expectedCount = listing.photos_taken || 1;
+      if (service === 'staging') expectedCount = listing.virtual_staging_used || 1;
+      if (service === 'cleaning') expectedCount = listing.virtual_cleaning_used || 1;
+      if (service === 'clean-stage') expectedCount = listing.virtual_cleaning_used || 1;
+      if (service === 'twilight') expectedCount = listing.virtual_twilight_used || 1;
+      if (service === 'video') expectedCount = listing.video_photos_used || 1;
 
-      if (expectedCount === 0) expectedCount = 1; // At least 1 file expected
+      console.log(`[AutoHDR] ${listing.order_id} | ${service} | ${files.length}/${expectedCount} files`);
 
-      if (files.length < expectedCount) {
-        console.log(`[AutoHDR] ${listing.order_id} | ${service} | Not enough files yet (${files.length}/${expectedCount})`);
-        continue;
-      }
+      if (files.length < expectedCount) continue;
 
-      // Service is complete!
-      console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete (${files.length} files)`);
+      // Service complete — route files to delivery folders
+      console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
+
+      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken);
 
       // Update Supabase
       const updateData = {};
@@ -565,12 +562,84 @@ async function checkAutoHDRCompletion(listing, accessToken) {
     }
   }
 
-  // Check if ALL services are complete
   await checkAllServicesComplete(listing);
 }
 
+// Route completed files from 04-FINAL-Photos to client delivery folders
+async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken) {
+  const copyTargets = [];
+
+  switch (service) {
+    case 'standard':
+      // Deliver to client Photos folder
+      copyTargets.push(`${deliveryBase}/Photos`);
+      break;
+
+    case 'staging':
+      // Copy to client Photos folder AND staging pipeline queue
+      copyTargets.push(`${deliveryBase}/Photos`);
+      copyTargets.push(`${deliveryBase}/Staging`);
+      break;
+
+    case 'cleaning':
+      // Copy to client Photos folder AND cleaning pipeline queue
+      copyTargets.push(`${deliveryBase}/Photos`);
+      copyTargets.push(`${deliveryBase}/Cleaning`);
+      break;
+
+    case 'clean-stage':
+      // Copy to cleaning pipeline queue only (staging happens after cleaning)
+      copyTargets.push(`${deliveryBase}/Cleaning`);
+      break;
+
+    case 'twilight':
+      // Deliver to twilight folder only
+      copyTargets.push(`${deliveryBase}/Twilight`);
+      break;
+
+    case 'video':
+      // Copy to client Photos folder AND video pipeline queue
+      copyTargets.push(`${deliveryBase}/Photos`);
+      copyTargets.push(`${deliveryBase}/Video`);
+      break;
+  }
+
+  for (const target of copyTargets) {
+    for (const file of files) {
+      const filename = file.name;
+      const destPath = `${target}/${filename}`;
+
+      try {
+        const copyResponse = await fetch('https://api.dropboxapi.com/2/files/copy_v2', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from_path: file.path_lower,
+            to_path: destPath,
+            autorename: true,
+          }),
+        });
+
+        const copyResult = await copyResponse.json();
+        if (copyResult.error) {
+          console.error(`[AutoHDR] Copy failed: ${file.name} → ${target}:`, copyResult.error_summary);
+        } else {
+          console.log(`[AutoHDR] Copied ${filename} → ${target}`);
+        }
+
+        // 200ms cooldown between copies
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (err) {
+        console.error(`[AutoHDR] Copy error: ${filename} → ${target}:`, err.message);
+      }
+    }
+  }
+}
+
 async function checkAllServicesComplete(listing) {
-  // Re-fetch listing to get latest state
   const { data: updated, error } = await supabase
     .from('listings')
     .select('*')
@@ -580,15 +649,16 @@ async function checkAllServicesComplete(listing) {
   if (error || !updated) return;
 
   const requiredServices = ['standard'];
-  if (updated.has_virtual_staging) requiredServices.push('staging');
-  if (updated.has_virtual_cleaning) requiredServices.push('cleaning');
-  if (updated.has_virtual_twilight) requiredServices.push('twilight');
-  if (updated.has_video) requiredServices.push('video');
+  if (updated.virtual_staging_used > 0) requiredServices.push('staging');
+  if (updated.virtual_cleaning_used > 0) requiredServices.push('cleaning');
+  if (updated.virtual_cleaning_used > 0 && updated.virtual_staging_used > 0) requiredServices.push('clean_stage');
+  if (updated.virtual_twilight_used > 0) requiredServices.push('twilight');
+  if (updated.video_photos_used > 0) requiredServices.push('video');
 
   const allComplete = requiredServices.every(s => updated[`autohdr_complete_${s}`] === true);
 
   if (allComplete) {
-    console.log(`[AutoHDR] ✅✅ All services complete for ${updated.order_id} — marking delivery_ready`);
+    console.log(`[AutoHDR] ✅✅ All services complete for ${updated.order_id} — marking completed`);
 
     const { error: statusError } = await supabase
       .from('listings')
@@ -599,7 +669,7 @@ async function checkAllServicesComplete(listing) {
       .eq('id', updated.id);
 
     if (statusError) {
-      console.error('[AutoHDR] Failed to set delivery_ready:', statusError.message);
+      console.error('[AutoHDR] Failed to set completed:', statusError.message);
     }
   }
 }
