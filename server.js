@@ -5,7 +5,7 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '20mb' }));
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -546,7 +546,6 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Update Supabase
       const updateData = {};
       updateData[completionField] = true;
-      updateData['updated_at'] = new Date().toISOString();
 
       const { error: updateError } = await supabase
         .from('listings')
@@ -765,6 +764,7 @@ app.post('/send-collaborator-invite', async (req, res) => {
 app.post('/ai-coach', async (req, res) => {
   try {
     const { imageBase64, roomType, pitchDegrees, rollDegrees, estimatedHeight } = req.body;
+    console.log('[AI Coach] Request received — room:', roomType, '| pitch:', pitchDegrees, '| base64 length:', imageBase64?.length || 0);
 
     if (!imageBase64) {
       return res.status(400).json({ error: 'Missing image data' });
@@ -861,7 +861,8 @@ RULES:
     const data = await response.json();
 
     if (!response.ok) {
-      console.error('[AI Coach] Anthropic error:', data);
+      console.error('[AI Coach] Anthropic error status:', response.status);
+      console.error('[AI Coach] Anthropic error body:', JSON.stringify(data));
       return res.status(500).json({ error: 'AI analysis failed' });
     }
 
