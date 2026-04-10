@@ -593,7 +593,8 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       break;
 
     case 'twilight':
-      // Deliver to twilight folder only
+      // Deliver to both standard Photos folder AND twilight folder
+      copyTargets.push(`${deliveryBase}/Photos`);
       copyTargets.push(`${deliveryBase}/Twilight`);
       break;
 
