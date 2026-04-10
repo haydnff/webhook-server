@@ -496,7 +496,7 @@ async function checkAutoHDRCompletion(listing, accessToken) {
   const services = ['standard'];
   if (listing.virtual_staging_used > 0) services.push('staging');
   if (listing.virtual_cleaning_used > 0) services.push('cleaning');
-  if (listing.virtual_cleaning_used > 0 && listing.virtual_staging_used > 0) services.push('clean-stage');
+  if (listing.clean_stage_used > 0) services.push('clean-stage');
   if (listing.virtual_twilight_used > 0) services.push('twilight');
   if (listing.video_photos_used > 0) services.push('video');
 
@@ -530,7 +530,7 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       if (service === 'standard') expectedCount = listing.photos_taken || 1;
       if (service === 'staging') expectedCount = listing.virtual_staging_used || 1;
       if (service === 'cleaning') expectedCount = listing.virtual_cleaning_used || 1;
-      if (service === 'clean-stage') expectedCount = listing.virtual_cleaning_used || 1;
+      if (service === 'clean-stage') expectedCount = listing.clean_stage_used || 1;
       if (service === 'twilight') expectedCount = listing.virtual_twilight_used || 1;
       if (service === 'video') expectedCount = listing.video_photos_used || 1;
 
@@ -651,7 +651,7 @@ async function checkAllServicesComplete(listing) {
   const requiredServices = ['standard'];
   if (updated.virtual_staging_used > 0) requiredServices.push('staging');
   if (updated.virtual_cleaning_used > 0) requiredServices.push('cleaning');
-  if (updated.virtual_cleaning_used > 0 && updated.virtual_staging_used > 0) requiredServices.push('clean_stage');
+  if (updated.clean_stage_used > 0) requiredServices.push('clean_stage');
   if (updated.virtual_twilight_used > 0) requiredServices.push('twilight');
   if (updated.video_photos_used > 0) requiredServices.push('video');
 
