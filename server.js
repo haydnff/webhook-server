@@ -71,11 +71,11 @@ app.post('/webhook', async (req, res) => {
   console.log('[Tonomo Webhook] Received order:', req.body?.orderId, '| status:', req.body?.orderStatus, '| email:', req.body?.email);
 
   const body = req.body;
-  console.log('[Tonomo] Full payload:', JSON.stringify(body, null, 2));
 
   // Core fields
   const orderId = body.orderId || body.invoiceId;
   const agentEmail = body.email || body.listingAgents?.[0]?.email;
+  const clientFullName = body.client_full_name || '';
   const propertyAddress = body.property_address?.formatted_address;
   const orderStatus = body.orderStatus;
 
@@ -164,6 +164,7 @@ app.post('/webhook', async (req, res) => {
     const listingData = {
       order_id: orderId,
       agent_email: agentEmail,
+      client_full_name: clientFullName,
       property_address: propertyAddress,
       package_type: packageType,
       photo_limit: photoLimit,
@@ -542,7 +543,7 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Service complete — route files to delivery folders
       console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
 
-      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken);
+      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing);
 
       // Update Supabase
       const updateData = {};
@@ -566,42 +567,38 @@ async function checkAutoHDRCompletion(listing, accessToken) {
 }
 
 // Route completed files from 04-FINAL-Photos to client delivery folders
-async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken) {
+async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing) {
+  const address = basePath.replace('/AutoHDR/', '');
+  const tonomoBase = `/Tonomo/${listing.client_full_name || 'Unknown'}/${address}`;
   const copyTargets = [];
 
   switch (service) {
     case 'standard':
-      // Deliver to client Photos folder
-      copyTargets.push(`${deliveryBase}/Photos`);
+      copyTargets.push(`${tonomoBase}/Listing Photos`);
       break;
 
     case 'staging':
-      // Copy to client Photos folder AND staging pipeline queue
-      copyTargets.push(`${deliveryBase}/Photos`);
-      copyTargets.push(`${deliveryBase}/Staging`);
+      copyTargets.push(`${tonomoBase}/Listing Photos`);
+      copyTargets.push(`${tonomoBase}/Virtual Staging`);
       break;
 
     case 'cleaning':
-      // Copy to client Photos folder AND cleaning pipeline queue
-      copyTargets.push(`${deliveryBase}/Photos`);
-      copyTargets.push(`${deliveryBase}/Cleaning`);
+      copyTargets.push(`${tonomoBase}/Listing Photos`);
+      copyTargets.push(`${tonomoBase}/Virtual Cleaning`);
       break;
 
     case 'clean-stage':
-      // Copy to cleaning pipeline queue only (staging happens after cleaning)
-      copyTargets.push(`${deliveryBase}/Cleaning`);
+      copyTargets.push(`${tonomoBase}/Virtual Cleaning`);
       break;
 
     case 'twilight':
-      // Deliver to both standard Photos folder AND twilight folder
-      copyTargets.push(`${deliveryBase}/Photos`);
-      copyTargets.push(`${deliveryBase}/Twilight`);
+      copyTargets.push(`${tonomoBase}/Listing Photos`);
+      copyTargets.push(`${tonomoBase}/Virtual Twilight`);
       break;
 
     case 'video':
-      // Copy to client Photos folder AND video pipeline queue
-      copyTargets.push(`${deliveryBase}/Photos`);
-      copyTargets.push(`${deliveryBase}/Video`);
+      copyTargets.push(`${tonomoBase}/Listing Photos`);
+      copyTargets.push(`${tonomoBase}/Photo to Video`);
       break;
   }
 
