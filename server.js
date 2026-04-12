@@ -71,6 +71,7 @@ app.post('/webhook', async (req, res) => {
   console.log('[Tonomo Webhook] Received order:', req.body?.orderId, '| status:', req.body?.orderStatus, '| email:', req.body?.email);
 
   const body = req.body;
+  console.log('[Tonomo] Full payload:', JSON.stringify(body, null, 2));
 
   // Core fields
   const orderId = body.orderId || body.invoiceId;
