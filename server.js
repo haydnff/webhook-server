@@ -582,6 +582,19 @@ async function checkAutoHDRCompletion(listing, accessToken) {
   await checkAllServicesComplete(listing);
 }
 
+function extractRoomType(filename) {
+  // Filename format: UUID_roomtype_bracket.jpg
+  // e.g. 87A3EE28-6B93-46D9-A63D-EEF1E6DE6F51_nursery_under.jpg
+  const parts = filename.replace('.jpg', '').split('_');
+  // UUID has hyphens so it's parts[0], bracket is last part, room is everything in between
+  if (parts.length >= 3) {
+    const roomParts = parts.slice(1, parts.length - 1);
+    const room = roomParts.join('-');
+    return room || null;
+  }
+  return null;
+}
+
 // Route completed files from 04-FINAL-Photos to client delivery folders
 async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, clientName, propertyAddress) {
   const tonomoBase = `/Tonomo/${clientName || 'Unknown'}/${propertyAddress}`;
@@ -592,10 +605,19 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       copyTargets.push(`${tonomoBase}/Listing Photos`);
       break;
 
-    case 'staging':
+    case 'staging': {
       copyTargets.push(`${tonomoBase}/Listing Photos`);
       copyTargets.push(`${tonomoBase}/Virtual Staging`);
+      const roomTypeMap = {};
+      for (const file of files) {
+        const room = extractRoomType(file.name);
+        if (room) {
+          roomTypeMap[file.name] = room;
+          console.log(`[Staging] ${file.name} → room type: ${room}`);
+        }
+      }
       break;
+    }
 
     case 'cleaning':
       copyTargets.push(`${tonomoBase}/Listing Photos`);
