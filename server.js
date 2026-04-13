@@ -188,9 +188,20 @@ app.post('/webhook', async (req, res) => {
 
     const { data: existingListing } = await supabase
       .from('listings')
-      .select('id')
+      .select('id, photos_uploaded, status')
       .eq('order_id', orderId)
       .maybeSingle();
+
+    // Don't overwrite upload state if photos have already been uploaded
+    if (existingListing?.photos_uploaded === true) {
+      delete listingData.photos_uploaded;
+      delete listingData.status;
+      delete listingData.virtual_staging_used;
+      delete listingData.virtual_cleaning_used;
+      delete listingData.virtual_twilight_used;
+      delete listingData.video_photos_used;
+      console.log(`[Tonomo Webhook] Preserving upload state for order ${orderId} — photos already uploaded`);
+    }
 
     const { error } = await supabase
       .from('listings')
