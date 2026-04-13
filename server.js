@@ -471,7 +471,11 @@ app.post('/dropbox-webhook', async (req, res) => {
       }
 
       if (!pendingListings || pendingListings.length === 0) {
-        console.log('[Dropbox Webhook] No pending AutoHDR listings');
+        const { data: debugListings } = await supabase
+          .from('listings')
+          .select('id, photos_uploaded, status, dropbox_autohdr_path')
+          .limit(5);
+        console.log('[Dropbox Webhook] No pending listings. Recent listings:', JSON.stringify(debugListings));
         continue;
       }
 
