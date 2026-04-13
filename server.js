@@ -595,6 +595,73 @@ function extractRoomType(filename) {
   return null;
 }
 
+// Maps Listy room strings (from filename slugs) to Decor8 AI room_type enums
+const DECOR8_ROOM_TYPE_MAP = {
+  'living-room': 'livingroom',
+  'family-room': 'livingroom',
+  'bedroom': 'bedroom',
+  'kids-room': 'kidsroom',
+  'home-office': 'office',
+  'study-room': 'office',
+  'dining-room': 'diningroom',
+};
+
+async function getDropboxTempLink(accessToken, filePath) {
+  const response = await fetch('https://api.dropboxapi.com/2/files/get_temporary_link', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ path: filePath }),
+  });
+  const result = await response.json();
+  if (result.error) {
+    throw new Error(`Dropbox temp link failed: ${result.error_summary || 'unknown'}`);
+  }
+  return result.link;
+}
+
+async function processFileWithDecor8(file, roomType, accessToken, destFolder) {
+  const decor8Room = DECOR8_ROOM_TYPE_MAP[roomType] || 'livingroom';
+  console.log(`[Decor8] Staging ${file.name} as ${decor8Room}`);
+
+  const tempLink = await getDropboxTempLink(accessToken, file.path_lower);
+
+  const stageResponse = await fetch('https://api.decor8.ai/generate_designs_for_room', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.DECOR8_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      input_image_url: tempLink,
+      room_type: decor8Room,
+      design_style: 'MODERN',
+      num_images: 1,
+    }),
+  });
+
+  const stageData = await stageResponse.json();
+  const stagedUrl = stageData?.info?.images?.[0]?.url;
+  if (!stagedUrl) {
+    throw new Error(`Decor8 returned no image: ${JSON.stringify(stageData).slice(0, 300)}`);
+  }
+
+  const imageResponse = await fetch(stagedUrl);
+  if (!imageResponse.ok) {
+    throw new Error(`Failed to download staged image: ${imageResponse.status}`);
+  }
+  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+
+  const destPath = `${destFolder}/${file.name}`;
+  const uploadResult = await uploadFileToDropbox(accessToken, destPath, imageBuffer);
+  if (uploadResult?.error) {
+    throw new Error(`Upload to ${destPath} failed: ${uploadResult.error_summary}`);
+  }
+  console.log(`[Decor8] Staged ${file.name} → ${destFolder}`);
+}
+
 // Route completed files from 04-FINAL-Photos to client delivery folders
 async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, clientName, propertyAddress) {
   const tonomoBase = `/Tonomo/${clientName || 'Unknown'}/${propertyAddress}`;
@@ -606,8 +673,10 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       break;
 
     case 'staging': {
+      // 1. Copy originals to Listing Photos via the shared copy loop below
       copyTargets.push(`${tonomoBase}/Listing Photos`);
-      copyTargets.push(`${tonomoBase}/Virtual Staging`);
+
+      // 2. Build room type map from filenames
       const roomTypeMap = {};
       for (const file of files) {
         const room = extractRoomType(file.name);
@@ -615,6 +684,41 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
           roomTypeMap[file.name] = room;
           console.log(`[Staging] ${file.name} → room type: ${room}`);
         }
+      }
+
+      // 3. Process each file with Decor8 and deliver to Virtual Staging
+      const stagingFolder = `${tonomoBase}/Virtual Staging`;
+      for (const file of files) {
+        const room = roomTypeMap[file.name] || 'living-room';
+        try {
+          await processFileWithDecor8(file, room, accessToken, stagingFolder);
+        } catch (err) {
+          console.error(`[Decor8] Failed for ${file.name}: ${err.message}. Falling back to copy.`);
+          try {
+            const destPath = `${stagingFolder}/${file.name}`;
+            const copyResponse = await fetch('https://api.dropboxapi.com/2/files/copy_v2', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                from_path: file.path_lower,
+                to_path: destPath,
+                autorename: true,
+              }),
+            });
+            const copyResult = await copyResponse.json();
+            if (copyResult.error) {
+              console.error(`[Decor8] Fallback copy failed: ${copyResult.error_summary}`);
+            } else {
+              console.log(`[Decor8] Fallback: copied original ${file.name} → ${stagingFolder}`);
+            }
+          } catch (fallbackErr) {
+            console.error(`[Decor8] Fallback copy error: ${fallbackErr.message}`);
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
       break;
     }
