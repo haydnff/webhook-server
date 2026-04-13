@@ -547,7 +547,8 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Service complete — route files to delivery folders
       console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
 
-      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing);
+      const tonomoAddress = listing.property_address || address;
+      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress);
 
       // Update Supabase
       const updateData = {};
@@ -571,9 +572,8 @@ async function checkAutoHDRCompletion(listing, accessToken) {
 }
 
 // Route completed files from 04-FINAL-Photos to client delivery folders
-async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing) {
-  const address = basePath.replace('/AutoHDR/', '');
-  const tonomoBase = `/Tonomo/${listing.client_full_name || 'Unknown'}/${address}`;
+async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, clientName, propertyAddress) {
+  const tonomoBase = `/Tonomo/${clientName || 'Unknown'}/${propertyAddress}`;
   const copyTargets = [];
 
   switch (service) {
