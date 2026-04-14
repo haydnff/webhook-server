@@ -868,7 +868,7 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
             }),
           });
           const cleanData = await cleanResponse.json();
-          const cleanedImageUrl = cleanData?.info?.url;
+          const cleanedImageUrl = cleanData?.info?.image?.url;
 
           if (!cleanedImageUrl) {
             console.error(`[CleanStage] Step 1 failed for ${file.name}:`, JSON.stringify(cleanData));
