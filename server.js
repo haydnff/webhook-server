@@ -557,22 +557,27 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Service complete — route files to delivery folders
       console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
 
-      // Mark complete in Supabase BEFORE routing, so a second concurrent
-      // webhook fetches fresh state and skips via the guard at the top of
-      // this loop (line 526: `if (listing[completionField] === true) continue;`).
-      const updateData = {};
-      updateData[completionField] = true;
-
-      const { error: updateError } = await supabase
+      // Atomic claim: only succeeds if completionField is still false.
+      // If another concurrent webhook already flipped it, this returns no rows
+      // and we skip routing entirely.
+      const { data: claimed, error: claimError } = await supabase
         .from('listings')
-        .update(updateData)
-        .eq('id', listing.id);
+        .update({ [completionField]: true })
+        .eq('id', listing.id)
+        .eq(completionField, false)
+        .select();
 
-      if (updateError) {
-        console.error(`[AutoHDR] Failed to update ${completionField}:`, updateError.message);
-      } else {
-        listing[completionField] = true;
+      if (claimError) {
+        console.error(`[AutoHDR] Claim failed for ${completionField}:`, claimError.message);
+        continue;
       }
+
+      if (!claimed || claimed.length === 0) {
+        console.log(`[AutoHDR] Already claimed ${service} for ${listing.order_id}, skipping`);
+        continue;
+      }
+
+      listing[completionField] = true;
 
       const tonomoAddress = listing.property_address || address;
       await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress, listing);
@@ -863,7 +868,7 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
             }),
           });
           const cleanData = await cleanResponse.json();
-          const cleanedImageUrl = cleanData.info?.image?.url;
+          const cleanedImageUrl = cleanData?.info?.url;
 
           if (!cleanedImageUrl) {
             console.error(`[CleanStage] Step 1 failed for ${file.name}:`, JSON.stringify(cleanData));
@@ -883,7 +888,7 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
           // Step 2 — Stage the cleaned photo using Decor8 staging
           console.log(`[CleanStage] Step 2 — Staging cleaned image`);
           const stagingInfo = extractStagingInfo(file.name);
-          const roomType = stagingInfo?.room?.replace(/-/g, '') || 'livingroom';
+          const roomType = DECOR8_ROOM_TYPE_MAP[stagingInfo?.room] || 'livingroom';
           const designStyle = stagingInfo?.style || 'modern';
 
           const stageResponse = await fetch('https://api.decor8.ai/generate_designs_for_room', {
