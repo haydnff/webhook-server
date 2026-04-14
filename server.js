@@ -457,42 +457,29 @@ app.post('/dropbox-webhook', async (req, res) => {
   try {
     const accessToken = await getDropboxAccessToken();
 
-    const accounts = req.body?.list_folder?.accounts || [];
-    if (accounts.length === 0) {
-      console.log('[Dropbox Webhook] No accounts in payload, skipping');
+    console.log('[Dropbox Webhook] Checking all pending listings...');
+
+    const { data: pendingListings, error: queryError } = await supabase
+      .from('listings')
+      .select('*')
+      .eq('photos_uploaded', true)
+      .neq('status', 'completed')
+      .not('dropbox_autohdr_path', 'is', null);
+
+    if (queryError) {
+      console.error('[Dropbox Webhook] Supabase query error:', queryError.message);
       return;
     }
 
-    for (const accountId of accounts) {
-      // Get cursor for this account (we need to use list_folder, not continue with accountId)
-      // Dropbox webhooks just notify that something changed — we check known paths
-      console.log('[Dropbox Webhook] Processing account:', accountId);
+    if (!pendingListings || pendingListings.length === 0) {
+      console.log('[Dropbox Webhook] No pending listings found');
+      return;
+    }
 
-      // Check all listings that have uploaded photos and have an AutoHDR path
-      const { data: pendingListings, error: queryError } = await supabase
-        .from('listings')
-        .select('*')
-        .eq('photos_uploaded', true)
-        .neq('status', 'completed')
-        .not('dropbox_autohdr_path', 'is', null);
+    console.log(`[Dropbox Webhook] Found ${pendingListings.length} pending listing(s) — checking AutoHDR...`);
 
-      if (queryError) {
-        console.error('[Dropbox Webhook] Supabase query error:', queryError.message);
-        continue;
-      }
-
-      if (!pendingListings || pendingListings.length === 0) {
-        const { data: debugListings } = await supabase
-          .from('listings')
-          .select('id, photos_uploaded, status, dropbox_autohdr_path')
-          .limit(5);
-        console.log('[Dropbox Webhook] No pending listings. Recent listings:', JSON.stringify(debugListings));
-        continue;
-      }
-
-      for (const listing of pendingListings) {
-        await checkAutoHDRCompletion(listing, accessToken);
-      }
+    for (const listing of pendingListings) {
+      await checkAutoHDRCompletion(listing, accessToken);
     }
   } catch (err) {
     console.error('[Dropbox Webhook] Processing error:', err.message);
