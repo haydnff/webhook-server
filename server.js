@@ -545,8 +545,10 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Service complete — route files to delivery folders
       console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
 
-      // Mark complete in Supabase BEFORE routing, so duplicate webhook triggers
-      // won't re-process the same files while routing is in progress.
+      const tonomoAddress = listing.property_address || address;
+      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress, listing);
+
+      // Mark complete in Supabase AFTER routing finishes successfully.
       const updateData = {};
       updateData[completionField] = true;
 
@@ -558,13 +560,8 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       if (updateError) {
         console.error(`[AutoHDR] Failed to update ${completionField}:`, updateError.message);
       } else {
-        // Reflect the DB update on the in-memory listing so any downstream
-        // checks in routeCompletedFiles see the current state.
         listing[completionField] = true;
       }
-
-      const tonomoAddress = listing.property_address || address;
-      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress, listing);
 
     } catch (err) {
       console.error(`[AutoHDR] Error checking ${service} for listing ${listing.id}:`, err.message);
@@ -680,22 +677,6 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       break;
 
     case 'staging': {
-      // Guard: re-check completion flag from DB to prevent duplicate runs
-      // when Dropbox webhooks fire for the staged files we're writing.
-      if (listing?.id) {
-        const { data: fresh } = await supabase
-          .from('listings')
-          .select('autohdr_complete_staging')
-          .eq('id', listing.id)
-          .single();
-        if (fresh?.autohdr_complete_staging === true && listing._stagingStarted !== true) {
-          // Another invocation is already handling staging — bail out.
-          console.log(`[Staging] Skipping duplicate run for listing ${listing.id}`);
-          return;
-        }
-        listing._stagingStarted = true;
-      }
-
       console.log(`[Route] Staging — clientName: "${listing?.client_full_name}" | address: "${propertyAddress}"`);
       console.log(`[Route] Tonomo base path: ${tonomoBase}`);
       console.log(`[Route] Files to copy: ${files.length}`);
