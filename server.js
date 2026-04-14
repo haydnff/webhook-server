@@ -827,9 +827,104 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       break;
     }
 
-    case 'clean-stage':
-      copyTargets.push(`${tonomoBase}/Virtual Cleaning`);
+    case 'clean-stage': {
+      console.log(`[CleanStage] Processing ${files.length} file(s) for listing ${listing?.id}`);
+
+      for (const file of files) {
+        try {
+          // Get temporary Dropbox link for the AutoHDR edited file
+          const tempLinkResponse = await fetch('https://api.dropboxapi.com/2/files/get_temporary_link', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path: file.path_lower }),
+          });
+          const tempLinkData = await tempLinkResponse.json();
+          const originalImageUrl = tempLinkData.link;
+
+          if (!originalImageUrl) {
+            console.error(`[CleanStage] Failed to get temp link for ${file.name}`);
+            continue;
+          }
+
+          // Step 1 — Clean the photo using Decor8 object removal
+          console.log(`[CleanStage] Step 1 — Cleaning ${file.name}`);
+          const cleanResponse = await fetch('https://api.decor8.ai/remove_objects_from_room', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.DECOR8_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              input_image_url: originalImageUrl,
+              room_type: 'livingroom',
+            }),
+          });
+          const cleanData = await cleanResponse.json();
+          const cleanedImageUrl = cleanData.info?.image?.url;
+
+          if (!cleanedImageUrl) {
+            console.error(`[CleanStage] Step 1 failed for ${file.name}:`, JSON.stringify(cleanData));
+            continue;
+          }
+          console.log(`[CleanStage] Step 1 complete — cleaned image ready`);
+
+          // Download the cleaned image
+          const cleanedImageResponse = await fetch(cleanedImageUrl);
+          const cleanedImageBuffer = Buffer.from(await cleanedImageResponse.arrayBuffer());
+
+          // Deliver cleaned photo to Virtual Cleaning folder
+          const cleaningDestPath = `${tonomoBase}/Virtual Cleaning/${file.name}`;
+          await uploadFileToDropbox(accessToken, cleaningDestPath, cleanedImageBuffer);
+          console.log(`[CleanStage] Delivered cleaned photo → Virtual Cleaning`);
+
+          // Step 2 — Stage the cleaned photo using Decor8 staging
+          console.log(`[CleanStage] Step 2 — Staging cleaned image`);
+          const stagingInfo = extractStagingInfo(file.name);
+          const roomType = stagingInfo?.room?.replace(/-/g, '') || 'livingroom';
+          const designStyle = stagingInfo?.style || 'modern';
+
+          const stageResponse = await fetch('https://api.decor8.ai/generate_designs_for_room', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${process.env.DECOR8_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              input_image_url: cleanedImageUrl,
+              room_type: roomType,
+              design_style: designStyle,
+              num_images: 1,
+            }),
+          });
+          const stageData = await stageResponse.json();
+          const stagedImageUrl = stageData.info?.images?.[0]?.url;
+
+          if (!stagedImageUrl) {
+            console.error(`[CleanStage] Step 2 failed for ${file.name}:`, JSON.stringify(stageData));
+            // Fallback — deliver cleaned version to Virtual Staging
+            const stagingFallbackPath = `${tonomoBase}/Virtual Staging/${file.name}`;
+            await uploadFileToDropbox(accessToken, stagingFallbackPath, cleanedImageBuffer);
+            console.log(`[CleanStage] Step 2 fallback — delivered cleaned photo → Virtual Staging`);
+            continue;
+          }
+          console.log(`[CleanStage] Step 2 complete — staged image ready`);
+
+          // Download and deliver staged photo to Virtual Staging folder
+          const stagedImageResponse = await fetch(stagedImageUrl);
+          const stagedImageBuffer = Buffer.from(await stagedImageResponse.arrayBuffer());
+          const stagingDestPath = `${tonomoBase}/Virtual Staging/${file.name}`;
+          await uploadFileToDropbox(accessToken, stagingDestPath, stagedImageBuffer);
+          console.log(`[CleanStage] Delivered cleaned+staged photo → Virtual Staging`);
+
+        } catch (err) {
+          console.error(`[CleanStage] Error processing ${file.name}:`, err.message);
+        }
+      }
       break;
+    }
 
     case 'twilight':
       copyTargets.push(`${tonomoBase}/Listing Photos`);
