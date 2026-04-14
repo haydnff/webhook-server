@@ -698,7 +698,7 @@ async function processFileWithDecor8Cleanse(file, accessToken, destFolder) {
   });
 
   const cleanseData = await cleanseResponse.json();
-  const cleansedUrl = cleanseData?.info?.url;
+  const cleansedUrl = cleanseData?.info?.image?.url;
   if (!cleansedUrl) {
     throw new Error(`Decor8 cleanse returned no image: ${JSON.stringify(cleanseData).slice(0, 300)}`);
   }
