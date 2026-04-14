@@ -680,6 +680,43 @@ async function processFileWithDecor8(file, roomType, accessToken, destFolder) {
   console.log(`[Decor8] Staged ${file.name} → ${destFolder}`);
 }
 
+async function processFileWithDecor8Cleanse(file, accessToken, destFolder) {
+  console.log(`[Cleaning] Removing objects from ${file.name}`);
+
+  const tempLink = await getDropboxTempLink(accessToken, file.path_lower);
+
+  const cleanseResponse = await fetch('https://api.decor8.ai/remove_objects_from_room', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.DECOR8_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      input_image_url: tempLink,
+      room_type: 'livingroom',
+    }),
+  });
+
+  const cleanseData = await cleanseResponse.json();
+  const cleansedUrl = cleanseData?.info?.url;
+  if (!cleansedUrl) {
+    throw new Error(`Decor8 cleanse returned no image: ${JSON.stringify(cleanseData).slice(0, 300)}`);
+  }
+
+  const imageResponse = await fetch(cleansedUrl);
+  if (!imageResponse.ok) {
+    throw new Error(`Failed to download cleansed image: ${imageResponse.status}`);
+  }
+  const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+
+  const destPath = `${destFolder}/${file.name}`;
+  const uploadResult = await uploadFileToDropbox(accessToken, destPath, imageBuffer);
+  if (uploadResult?.error) {
+    throw new Error(`Upload to ${destPath} failed: ${uploadResult.error_summary}`);
+  }
+  console.log(`[Cleaning] Cleaned ${file.name} → Virtual Cleaning folder`);
+}
+
 // Route completed files from 04-FINAL-Photos to client delivery folders
 async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, clientName, propertyAddress, listing = null) {
   const tonomoBase = `/Tonomo/${clientName || 'Unknown'}/${propertyAddress}`;
@@ -746,10 +783,49 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       break;
     }
 
-    case 'cleaning':
+    case 'cleaning': {
+      console.log(`[Route] Cleaning — clientName: "${listing?.client_full_name}" | address: "${propertyAddress}"`);
+      console.log(`[Route] Tonomo base path: ${tonomoBase}`);
+      console.log(`[Route] Files to copy: ${files.length}`);
+
+      // 1. Copy originals to Listing Photos via the shared copy loop below
       copyTargets.push(`${tonomoBase}/Listing Photos`);
-      copyTargets.push(`${tonomoBase}/Virtual Cleaning`);
+
+      // 2. Process each file with Decor8 cleanse and deliver to Virtual Cleaning
+      const cleaningFolder = `${tonomoBase}/Virtual Cleaning`;
+      for (const file of files) {
+        try {
+          await processFileWithDecor8Cleanse(file, accessToken, cleaningFolder);
+        } catch (err) {
+          console.error(`[Decor8] Cleanse failed for ${file.name}: ${err.message}. Falling back to copy.`);
+          try {
+            const destPath = `${cleaningFolder}/${file.name}`;
+            const copyResponse = await fetch('https://api.dropboxapi.com/2/files/copy_v2', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                from_path: file.path_lower,
+                to_path: destPath,
+                autorename: true,
+              }),
+            });
+            const copyResult = await copyResponse.json();
+            if (copyResult.error) {
+              console.error(`[Decor8] Cleanse fallback copy failed: ${copyResult.error_summary}`);
+            } else {
+              console.log(`[Decor8] Cleanse fallback: copied original ${file.name} → ${cleaningFolder}`);
+            }
+          } catch (fallbackErr) {
+            console.error(`[Decor8] Cleanse fallback copy error: ${fallbackErr.message}`);
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
       break;
+    }
 
     case 'clean-stage':
       copyTargets.push(`${tonomoBase}/Virtual Cleaning`);
