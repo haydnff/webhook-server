@@ -489,6 +489,18 @@ app.post('/dropbox-webhook', async (req, res) => {
 // MARK: - AutoHDR Completion Pipeline
 
 async function checkAutoHDRCompletion(listing, accessToken) {
+  // Re-fetch the listing so we have the freshest completion flags — this
+  // ensures a second concurrent webhook sees any in-flight updates from a
+  // parallel invocation and skips services that are already marked complete.
+  const { data: fresh, error: freshError } = await supabase
+    .from('listings')
+    .select('*')
+    .eq('id', listing.id)
+    .single();
+  if (!freshError && fresh) {
+    listing = fresh;
+  }
+
   const basePath = listing.dropbox_autohdr_path; // e.g. /AutoHDR/123 Main St
   if (!basePath) return;
 
@@ -545,10 +557,9 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Service complete — route files to delivery folders
       console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
 
-      const tonomoAddress = listing.property_address || address;
-      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress, listing);
-
-      // Mark complete in Supabase AFTER routing finishes successfully.
+      // Mark complete in Supabase BEFORE routing, so a second concurrent
+      // webhook fetches fresh state and skips via the guard at the top of
+      // this loop (line 526: `if (listing[completionField] === true) continue;`).
       const updateData = {};
       updateData[completionField] = true;
 
@@ -562,6 +573,9 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       } else {
         listing[completionField] = true;
       }
+
+      const tonomoAddress = listing.property_address || address;
+      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress, listing);
 
     } catch (err) {
       console.error(`[AutoHDR] Error checking ${service} for listing ${listing.id}:`, err.message);
