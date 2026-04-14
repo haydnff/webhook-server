@@ -558,10 +558,8 @@ async function checkAutoHDRCompletion(listing, accessToken) {
       // Service complete — route files to delivery folders
       console.log(`[AutoHDR] ✅ ${listing.order_id} | ${service} complete — routing ${files.length} files`);
 
-      const tonomoAddress = listing.property_address || address;
-      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress);
-
-      // Update Supabase
+      // Mark complete in Supabase BEFORE routing, so duplicate webhook triggers
+      // won't re-process the same files while routing is in progress.
       const updateData = {};
       updateData[completionField] = true;
 
@@ -572,7 +570,14 @@ async function checkAutoHDRCompletion(listing, accessToken) {
 
       if (updateError) {
         console.error(`[AutoHDR] Failed to update ${completionField}:`, updateError.message);
+      } else {
+        // Reflect the DB update on the in-memory listing so any downstream
+        // checks in routeCompletedFiles see the current state.
+        listing[completionField] = true;
       }
+
+      const tonomoAddress = listing.property_address || address;
+      await routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, listing.client_full_name, tonomoAddress, listing);
 
     } catch (err) {
       console.error(`[AutoHDR] Error checking ${service} for listing ${listing.id}:`, err.message);
@@ -591,6 +596,21 @@ function extractRoomType(filename) {
     const roomParts = parts.slice(1, parts.length - 1);
     const room = roomParts.join('-');
     return room || null;
+  }
+  return null;
+}
+
+function extractStagingInfo(filename) {
+  // New filename format: UUID_roomtype_style_bracket.{jpg|heic}
+  // e.g. 87A3EE28-6B93-46D9-A63D-EEF1E6DE6F51_bedroom_modern_under.heic
+  const base = filename.replace(/\.(jpg|jpeg|heic|heif)$/i, '');
+  const parts = base.split('_');
+  if (parts.length >= 4) {
+    const bracket = parts[parts.length - 1];
+    const style = parts[parts.length - 2];
+    const roomParts = parts.slice(1, parts.length - 2);
+    const room = roomParts.join('-');
+    return { room, style, bracket };
   }
   return null;
 }
@@ -663,7 +683,7 @@ async function processFileWithDecor8(file, roomType, accessToken, destFolder) {
 }
 
 // Route completed files from 04-FINAL-Photos to client delivery folders
-async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, clientName, propertyAddress) {
+async function routeCompletedFiles(service, files, basePath, deliveryBase, accessToken, clientName, propertyAddress, listing = null) {
   const tonomoBase = `/Tonomo/${clientName || 'Unknown'}/${propertyAddress}`;
   const copyTargets = [];
 
@@ -673,23 +693,40 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       break;
 
     case 'staging': {
+      // Guard: re-check completion flag from DB to prevent duplicate runs
+      // when Dropbox webhooks fire for the staged files we're writing.
+      if (listing?.id) {
+        const { data: fresh } = await supabase
+          .from('listings')
+          .select('autohdr_complete_staging')
+          .eq('id', listing.id)
+          .single();
+        if (fresh?.autohdr_complete_staging === true && listing._stagingStarted !== true) {
+          // Another invocation is already handling staging — bail out.
+          console.log(`[Staging] Skipping duplicate run for listing ${listing.id}`);
+          return;
+        }
+        listing._stagingStarted = true;
+      }
+
       // 1. Copy originals to Listing Photos via the shared copy loop below
       copyTargets.push(`${tonomoBase}/Listing Photos`);
 
-      // 2. Build room type map from filenames
-      const roomTypeMap = {};
+      // 2. Build staging info map (room + style) from filenames
+      const stagingInfoMap = {};
       for (const file of files) {
-        const room = extractRoomType(file.name);
-        if (room) {
-          roomTypeMap[file.name] = room;
-          console.log(`[Staging] ${file.name} → room type: ${room}`);
+        const info = extractStagingInfo(file.name);
+        if (info) {
+          stagingInfoMap[file.name] = info;
+          console.log(`[Staging] ${file.name} → room: ${info.room} | style: ${info.style}`);
         }
       }
 
       // 3. Process each file with Decor8 and deliver to Virtual Staging
       const stagingFolder = `${tonomoBase}/Virtual Staging`;
       for (const file of files) {
-        const room = roomTypeMap[file.name] || 'living-room';
+        const info = stagingInfoMap[file.name];
+        const room = info?.room || 'living-room';
         try {
           await processFileWithDecor8(file, room, accessToken, stagingFolder);
         } catch (err) {
