@@ -696,6 +696,10 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
         listing._stagingStarted = true;
       }
 
+      console.log(`[Route] Staging — clientName: "${listing?.client_full_name}" | address: "${propertyAddress}"`);
+      console.log(`[Route] Tonomo base path: ${tonomoBase}`);
+      console.log(`[Route] Files to copy: ${files.length}`);
+
       // 1. Copy originals to Listing Photos via the shared copy loop below
       copyTargets.push(`${tonomoBase}/Listing Photos`);
 
@@ -772,6 +776,8 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
       const filename = file.name;
       const destPath = `${target}/${filename}`;
 
+      console.log(`[Route] Copying ${filename} from ${file.path_lower} → ${destPath}`);
+
       try {
         const copyResponse = await fetch('https://api.dropboxapi.com/2/files/copy_v2', {
           method: 'POST',
@@ -788,9 +794,9 @@ async function routeCompletedFiles(service, files, basePath, deliveryBase, acces
 
         const copyResult = await copyResponse.json();
         if (copyResult.error) {
-          console.error(`[AutoHDR] Copy failed: ${file.name} → ${target}:`, copyResult.error_summary);
+          console.error(`[Route] Copy FAILED: ${JSON.stringify(copyResult.error)}`);
         } else {
-          console.log(`[AutoHDR] Copied ${filename} → ${target}`);
+          console.log(`[Route] Copy SUCCESS → ${destPath}`);
         }
 
         // 200ms cooldown between copies
